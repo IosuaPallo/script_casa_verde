@@ -1,6 +1,5 @@
 import base64
 
-from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as ec
@@ -26,14 +25,13 @@ class SiteAutoComplete:
         element_def = self.driver.find_element(element_locator_def[0], element_locator_def[1])
         # Scroll the button into view
         self.driver.execute_script("arguments[0].scrollIntoView(true);", element_def)
-        time.sleep(1)
+        time.sleep(0.2)
         element_def.click()
 
     def click_and_upload(self, anchor_id, input_id, file_path):
         try:
             # Find and click the anchor element to activate the file input
             anchor_element = self.driver.find_element(By.ID, anchor_id)
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", anchor_element)
             anchor_element.click()  # Click the anchor
 
             # Now find the file input and upload the file
@@ -45,9 +43,119 @@ class SiteAutoComplete:
         except Exception as e:
             print(f"Error occurred during upload for {file_path}: {e}")
 
+    def auto_complete_captcha(self, canvas_id, input_name, continue_button_id):
+        sem = 0
+        while sem == 0:
+
+
+            canvas_data = self.driver.execute_script(f"""
+                var canvas = document.getElementById('{canvas_id}');
+                return canvas.toDataURL('image/png');
+            """)
+            canvas_data = canvas_data.split(',')[1]
+            image_data = base64.b64decode(canvas_data)
+            nparr = np.frombuffer(image_data, np.uint8)
+            image = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
+
+            image_bgr = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
+
+            image_gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))  # Create a kernel
+
+            # Apply morphological operations to remove thin lines (use a closing operation)
+            morphed = cv2.morphologyEx(image_gray, cv2.MORPH_OPEN, kernel, iterations=1)
+
+            # Step 5: Find contours of the morphologically processed image
+            contours, _ = cv2.findContours(morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            # Create a mask to hold the areas we want to keep
+            mask = np.zeros_like(morphed)
+
+            # Step 6: Filter contours based on width
+            for contour in contours:
+                x, y, w, h = cv2.boundingRect(contour)
+
+                # Remove thin or oblique lines
+                if w < 6 or h < 10 or w > 80 or h > 80:
+                    cv2.drawContours(morphed, [contour], contourIdx=-1, color=(0,), thickness=cv2.FILLED)
+
+            # Step 7: Combine the mask with the original image
+            result = morphed
+
+            # Save the processed image
+
+            _, binary = cv2.threshold(result, 20, 255, cv2.THRESH_BINARY_INV)
+
+            cv2.imwrite("cleaned_image.png", binary)
+
+            # reader = easyocr.Reader(['en'])
+            # result = reader.readtext(binary)
+
+            captcha_text_processed = pytesseract.image_to_string(binary)
+
+            # captcha_text_processed = ''
+            # for (bbox, text, prob) in result:
+            #     captcha_text_processed += text  # Combine detected text
+
+            transformations = {
+                ' ': '',
+                '$': 'S',  # Replace '$' with 'S'
+                '€': 'E',
+                '/': 'l',
+                '\\': 'l',
+                '>': '7',
+                '<': 'L',
+                '*': 'x',
+                "+": 'x',
+                '|': 'l',
+                # '&': 'S',
+                # ')': '',
+                # '(': 'L',
+                '@': 'e',
+                "\n": '',
+                ',': '',
+            }
+
+            captcha_text_processed = ''.join(
+                [transformations[char] if char in transformations else char for char in captcha_text_processed])
+
+            # time.sleep(2)
+            # self.driver.find_element(By.NAME, input_name).send_keys(captcha_text_processed)
+
+            self.driver.execute_script(
+                f"document.getElementsByName('{input_name}')[0].value = '{captcha_text_processed}';")
+
+
+            # image = Image.open("cleaned_image.png")
+            # text = pytesseract.image_to_string(image)
+            # text = "".join([transformations[char] if char in transformations else char for char in text])
+            # print(f'Captcha text Tesseract = {text}')
+
+            time.sleep(1)
+            # click continue button
+            self.driver.find_element(By.ID, continue_button_id).click()
+            time.sleep(0.5)
+
+            # get error modal
+            error_modal = self.driver.find_element(By.ID, "errorModal")
+
+            # Get the display property of the error modal
+            display_property = self.driver.execute_script("return window.getComputedStyle(arguments["
+                                                          "0]).getPropertyValue('display');", error_modal)
+
+            # Check if the modal is shown (display: block means it's visible)
+
+            if display_property == 'none':
+                sem = 1
+            else:
+                sem = 0
+                self.driver.find_element(By.ID, 'BtnError').click()
+                time.sleep(0.5)
+
     def begin_site_completion(self):
 
-        self.driver.get("https://www.genway.ro/simulator_casa_verde/")
+        self.driver.get(self.user_data["link"])
 
         # modal de inceput
         modal = self.driver.find_element(By.ID, "termsModal")
@@ -60,98 +168,16 @@ class SiteAutoComplete:
 
         # PAS 1
 
-        # Fill in the email and confirm email fields
         self.driver.find_element(By.ID, "AdresaEmail").send_keys(self.user_data["email"])
         self.driver.find_element(By.ID, "ConfirmareAdresaEmail").send_keys(self.user_data["email_confirm"])
 
         # Pause for CAPTCHA solving (first CAPTCHA)
-        # input("Please solve the first CAPTCHA manually and press Enter to continue...")
 
-        # canvas_data = self.driver.execute_script("""
-        #     var canvas = document.getElementById('canvasfirst');
-        #     return canvas.toDataURL('image/png');
-        # """)
-        # canvas_data = canvas_data.split(',')[1]
-        # image_data = base64.b64decode(canvas_data)
-        # nparr = np.frombuffer(image_data, np.uint8)
-        # image = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
-        #
-        # image_bgr = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
-        #
-        # image_gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-        #
-        # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))  # Create a kernel
-        #
-        # # Apply morphological operations to remove thin lines (use a closing operation)
-        # morphed = cv2.morphologyEx(image_gray, cv2.MORPH_OPEN, kernel, iterations=1)
-        #
-        # # Step 5: Find contours of the morphologically processed image
-        # contours, _ = cv2.findContours(morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        #
-        # # Create a mask to hold the areas we want to keep
-        # mask = np.zeros_like(morphed)
-        #
-        # # Step 6: Filter contours based on width
-        # for contour in contours:
-        #     x, y, w, h = cv2.boundingRect(contour)
-        #
-        #     # Remove thin or oblique lines
-        #     if w < 6 or h < 10 or w > 80 or h > 80:
-        #         cv2.drawContours(morphed, [contour], contourIdx=-1, color=(0,), thickness=cv2.FILLED)
-        #
-        # # Step 7: Combine the mask with the original image
-        # result = morphed
-        #
-        # # Save the processed image
-        #
-        # reader = easyocr.Reader(['en'])
-        # _, binary = cv2.threshold(result, 20, 255, cv2.THRESH_BINARY_INV)
-        #
-        # cv2.imwrite("cleaned_image.png", binary)
-        #
-        # result = reader.readtext(binary)
-        #
-        # captcha_text_processed = ''
-        # for (bbox, text, prob) in result:
-        #     captcha_text_processed += text  # Combine detected texts
-        #
-        # transformations = {
-        #     ' ': '',
-        #     '$': 'S',  # Replace '$' with 'S'
-        #     '€': 'E',
-        #     '/': 'l',
-        #     '\\': 'l',
-        #     '>': '7',
-        #     '*': 'x',
-        #     "+": 'x',
-        #     '|': 'l'
-        # }
-        #
-        # captcha_text_processed = ''.join(
-        #     [transformations[char] if char in transformations else char for char in captcha_text_processed])
-        #
-        # # for index, char in enumerate(captcha_text_processed):
-        # #     if char==' ':
-        #
-        # print(f'Captcha text cleansed = {captcha_text_processed}')
-        #
-        # image = Image.open("cleaned_image.png")
-        # text = pytesseract.image_to_string(image)
-        # text = "".join([transformations[char] if char in transformations else char for char in text])
-        # print(f'Captcha text Tesseract = {text}')
-
-        input("First capcha, press enter after....")
-
-        # Click the button to continue to the next step
-        # WebDriverWait(driver, 30).until(ec.element_to_be_clickable((By.ID, "validate-step1")))
-
-        time.sleep(1)
-        continue_button = self.driver.find_element(By.ID, "validate-step1")
-        continue_button.click()
+        self.auto_complete_captcha('canvasfirst', 'code', 'validate-step1')
 
         # PAS 2
 
-        element = WebDriverWait(self.driver, 15).until(ec.element_to_be_clickable((By.ID, "Nume")))
+        element = WebDriverWait(self.driver, 5).until(ec.element_to_be_clickable((By.ID, "Nume")))
         self.driver.execute_script("arguments[0].scrollIntoView(true);", element)
         element.send_keys(self.user_data["name"])
 
@@ -163,7 +189,7 @@ class SiteAutoComplete:
         self.driver.find_element(By.ID, "CNP").send_keys(self.user_data["cnp"])
         self.driver.find_element(By.ID, "Adresa").send_keys(self.user_data["address"])
 
-        select_element = WebDriverWait(self.driver, 15).until(
+        select_element = WebDriverWait(self.driver, 5).until(
             ec.visibility_of_element_located((By.ID, "Judet"))
         )
         # Create a Select object
@@ -178,11 +204,12 @@ class SiteAutoComplete:
 
         # Continue to the next step
 
+        time.sleep(0.5)
         continue_button_locator = (By.ID, "validate-step2")
-        time.sleep(1)
         self.click_element_function(continue_button_locator)
 
         # PAS 3
+        time.sleep(0.5)
 
         # Upload document 1 (Copie CI)
         self.click_and_upload("document_1", "document_input_1", self.user_data["ci_pdf"])
@@ -199,11 +226,13 @@ class SiteAutoComplete:
         # Continue to the next step
         continue_button_locator = (By.ID, "validate-step3")
 
-        time.sleep(1)
         self.click_element_function(continue_button_locator)
 
         # PAS 4
 
+        time.sleep(0.5)
+
+        # click the checkboxes
         input_check_acord_2 = self.driver.find_element(By.ID, "CheckDeAcord2")
         input_check_acord_2.click()
 
@@ -217,15 +246,7 @@ class SiteAutoComplete:
         input_check_acord.click()
 
         # Pause for CAPTCHA solving (second CAPTCHA)
-        input("Solve the second CAPTCHA  and press Enter to finish the process...")
+        self.auto_complete_captcha('canvassecond', 'codesecond', 'validate-step4')
 
-        # Step 4: Submit the form
-        # submit_button = WebDriverWait(self.driver, 15).until(
-        #     ec.element_to_be_clickable((By.ID, "validate-step4"))
-        # )
-        # self.driver.execute_script("arguments[0].scrollIntoView(true);", submit_button)
-        # submit_button.click()
-
-        # Close the browser after successful submission
         time.sleep(5)
         self.driver.quit()
