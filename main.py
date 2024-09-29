@@ -1,11 +1,17 @@
+import base64
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as ec
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import Select
+import cv2
+from easyocr import easyocr
+import numpy as np
 import time
 import os
+import pytesseract
+from PIL import Image
 
 # Get the desktop path dynamically
 desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
@@ -85,7 +91,91 @@ def begin_site_completion(site_completion):
     driver.find_element(By.ID, "ConfirmareAdresaEmail").send_keys(user_data["email_confirm"])
 
     # Pause for CAPTCHA solving (first CAPTCHA)
-    input("Please solve the first CAPTCHA manually and press Enter to continue...")
+    # input("Please solve the first CAPTCHA manually and press Enter to continue...")
+
+    canvas_data = driver.execute_script("""
+        var canvas = document.getElementById('canvasfirst');
+        return canvas.toDataURL('image/png');
+    """)
+    canvas_data = canvas_data.split(',')[1]
+    image_data = base64.b64decode(canvas_data)
+    nparr = np.frombuffer(image_data, np.uint8)
+    image = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
+
+    image_bgr = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
+
+    image_gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+
+    cv2.imwrite("preprocessed_captcha.png", image)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))  # Create a kernel
+
+    # Apply morphological operations to remove thin lines (use a closing operation)
+    morphed = cv2.morphologyEx(image_gray, cv2.MORPH_OPEN, kernel, iterations=1)
+    cv2.imwrite("morphed_open.png", morphed)
+
+    # Step 5: Find contours of the morphologically processed image
+    contours, _ = cv2.findContours(morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Create a mask to hold the areas we want to keep
+    mask = np.zeros_like(morphed)
+
+    # Step 6: Filter contours based on width
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+
+        # Remove thin or oblique lines
+        if w < 6 or h < 10 or w > 80 or h > 80:
+            cv2.drawContours(morphed, [contour], contourIdx=-1, color=(0,), thickness=cv2.FILLED)
+
+    # Step 7: Combine the mask with the original image
+    result = morphed
+
+    cv2.imwrite("morphed.png", result)
+
+    scale_factor = 3  # Change this value to increase or decrease the size
+    new_width = int(result.shape[1] * scale_factor)
+    new_height = int(result.shape[0] * scale_factor)
+    result = cv2.resize(result, (new_width, new_height))
+
+    # Save the processed image
+
+    reader = easyocr.Reader(['en'])
+    _, binary = cv2.threshold(result, 20, 255, cv2.THRESH_BINARY_INV)
+
+    cv2.imwrite("cleaned_image.png", binary)
+
+    result = reader.readtext(binary)
+
+    captcha_text_processed = ''
+    for (bbox, text, prob) in result:
+        captcha_text_processed += text  # Combine detected texts
+
+    transformations = {
+        ' ': '',
+        '$': 'S',  # Replace '$' with 'S'
+        '€': 'E',
+        '/': 'l',
+        '\\': 'l',
+        '>': '7',
+        '*': 'x',
+        "+": 'x',
+    }
+
+    captcha_text_processed = ''.join(
+        [transformations[char] if char in transformations else char for char in captcha_text_processed])
+
+    # for index, char in enumerate(captcha_text_processed):
+    #     if char==' ':
+
+    print(f'Captcha text cleansed = {captcha_text_processed}')
+
+    image = Image.open("cleaned_image.png")
+    text = pytesseract.image_to_string(image)
+    text = "".join([transformations[char] if char in transformations else char for char in text])
+    print(f'Captcha text Tesseract = {text}')
+
+    input("First capcha, press enter after....")
 
     # Click the button to continue to the next step
     WebDriverWait(driver, 30).until(ec.element_to_be_clickable((By.ID, "validate-step1")))
