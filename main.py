@@ -133,10 +133,10 @@ def begin_site_completion(site_completion):
 
     cv2.imwrite("morphed.png", result)
 
-    scale_factor = 3  # Change this value to increase or decrease the size
-    new_width = int(result.shape[1] * scale_factor)
-    new_height = int(result.shape[0] * scale_factor)
-    result = cv2.resize(result, (new_width, new_height))
+    # scale_factor = 3  # Change this value to increase or decrease the size
+    # new_width = int(result.shape[1] * scale_factor)
+    # new_height = int(result.shape[0] * scale_factor)
+    # result = cv2.resize(result, (new_width, new_height))
 
     # Save the processed image
 
@@ -160,6 +160,7 @@ def begin_site_completion(site_completion):
         '>': '7',
         '*': 'x',
         "+": 'x',
+        '|': 'l'
     }
 
     captcha_text_processed = ''.join(
